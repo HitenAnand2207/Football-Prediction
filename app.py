@@ -7,7 +7,13 @@ import plotly.express as px
 from model.predictor import predict_match, get_team_stats, get_head_to_head
 from scraper.live_scrapper import get_today_matches
 from utils.features import create_features
-from utils.analytics import calculate_betting_odds, predict_score, get_league_table
+from utils.analytics import (
+    calculate_betting_odds,
+    predict_score,
+    get_league_table,
+    generate_match_insights,
+    get_team_recent_trend,
+)
 
 # Page configuration
 st.set_page_config(page_title="Football Predictor Pro", page_icon="⚽", layout="wide")
@@ -152,6 +158,28 @@ with tab1:
                         )
                         st.write(f"📅 Recent Form: {away_stats['recent_form']}")
 
+                # Match intelligence
+                insights = generate_match_insights(
+                    home, away, probabilities, home_stats, away_stats
+                )
+                st.markdown("### 🧠 Match Intelligence")
+                intel_col1, intel_col2, intel_col3 = st.columns(3)
+
+                with intel_col1:
+                    st.metric("Confidence Tier", insights["confidence_tier"])
+                with intel_col2:
+                    st.metric("Upset Alert", "Yes" if insights["upset_alert"] else "No")
+                with intel_col3:
+                    st.metric(
+                        "Model Certainty",
+                        f"{insights['confidence'] * 100:.1f}%",
+                    )
+
+                if insights["upset_alert"]:
+                    st.warning(f"⚠️ {insights['upset_reason']}")
+                else:
+                    st.caption(insights["upset_reason"])
+
                 # Betting Odds
                 st.markdown("### 💰 Betting Odds (Decimal Format)")
                 odds = calculate_betting_odds(probabilities)
@@ -163,6 +191,19 @@ with tab1:
                     st.info(f"**Draw:** {odds['Draw']}")
                 with odds_col3:
                     st.info(f"**Away Win:** {odds['Away Win']}")
+
+                if insights["confidence_tier"] == "High":
+                    st.success(
+                        "✅ Conservative pick: back the predicted main outcome due to high model confidence."
+                    )
+                elif insights["confidence_tier"] == "Medium":
+                    st.info(
+                        "ℹ️ Balanced pick: consider safer combinations (e.g., double chance) due to medium confidence."
+                    )
+                else:
+                    st.warning(
+                        "⚠️ High-variance fixture: confidence is low, so treat this prediction cautiously."
+                    )
 
                 # Score Prediction
                 st.markdown("### ⚽ Predicted Score")
@@ -244,6 +285,37 @@ with tab2:
             color_discrete_map={"Scored": "#2ca02c", "Conceded": "#d62728"},
         )
         st.plotly_chart(fig_goals, use_container_width=True)
+
+        # Recent trend view
+        trend_df = get_team_recent_trend(selected_team, df, last_n=10)
+        if not trend_df.empty:
+            st.markdown("### 📈 Recent Performance Trend")
+
+            trend_fig = px.line(
+                trend_df,
+                x="Date",
+                y="Cumulative Points",
+                markers=True,
+                title=f"{selected_team} - Cumulative Points (Last 10 Matches)",
+            )
+            st.plotly_chart(trend_fig, use_container_width=True)
+
+            st.dataframe(
+                trend_df[
+                    [
+                        "Date",
+                        "Opponent",
+                        "Venue",
+                        "Result",
+                        "Points",
+                        "Goals For",
+                        "Goals Against",
+                        "Form (Last 3)",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
     else:
         st.warning("No data available for this team.")
 
