@@ -5,26 +5,18 @@ from utils.analytics import (
     calculate_betting_odds,
     predict_score,
     generate_match_insights,
+    get_match_edge_summary,
 )
+from utils.features import create_features
 
 # Load saved model and encoder
 model = joblib.load("model/match_predictor.pkl")
-le = joblib.load("model/label_encoder.pkl")
 
 # Load CSV and recent features
 df = pd.read_csv("data/matches.csv")
 df["Date"] = pd.to_datetime(df["Date"], dayfirst=True)
 df = df.dropna(subset=["FTHG", "FTAG", "FTR"])
-df["home_team_form"] = (
-    df.groupby("HomeTeam")["FTR"]
-    .apply(lambda x: x.map({"H": 1, "D": 0, "A": 0}).rolling(3, min_periods=1).mean())
-    .reset_index(0, drop=True)
-)
-df["away_team_form"] = (
-    df.groupby("AwayTeam")["FTR"]
-    .apply(lambda x: x.map({"A": 1, "D": 0, "H": 0}).rolling(3, min_periods=1).mean())
-    .reset_index(0, drop=True)
-)
+df, le = create_features(df)
 
 # Example prediction with enhanced features
 home = "Arsenal"
@@ -40,6 +32,7 @@ if home not in le.classes_ or away not in le.classes_:
 else:
     # Basic prediction
     prediction, probabilities = predict_match(home, away, df, model, le)
+    edge_summary = get_match_edge_summary(home, away, df)
 
     print(f"\n🎯 PREDICTED RESULT: {prediction}")
     print(f"   Confidence: {max(probabilities) * 100:.1f}%")
@@ -54,6 +47,13 @@ else:
     print(f"\n💰 BETTING ODDS (Decimal):")
     for outcome, odd in odds.items():
         print(f"   {outcome}: {odd}")
+
+    print(f"\n🧠 TACTICAL EDGE:")
+    print(f"   Momentum Gap: {edge_summary['momentum_gap']:+.2f}")
+    print(f"   Attack Gap:   {edge_summary['attack_gap']:+.2f}")
+    print(f"   Defense Gap:  {edge_summary['defense_gap']:+.2f}")
+    print(f"   Shot Gap:     {edge_summary['shot_gap']:+.2f}")
+    print(f"   Discipline:   {edge_summary['discipline_gap']:+.2f}")
 
     # Score prediction
     score_pred = predict_score(home, away, df)
@@ -94,7 +94,13 @@ else:
 
     # Match intelligence summary
     insights = generate_match_insights(
-        home, away, probabilities, home_stats, away_stats
+        home,
+        away,
+        probabilities,
+        home_stats,
+        away_stats,
+        edge_summary["home_snapshot"],
+        edge_summary["away_snapshot"],
     )
     print(f"\n🧠 MATCH INTELLIGENCE:")
     print(f"   Confidence Tier: {insights['confidence_tier']}")
