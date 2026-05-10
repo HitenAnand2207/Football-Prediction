@@ -9,7 +9,8 @@ A comprehensive machine learning-based web application to predict football match
 - **Confidence Scores** with probability breakdown for all outcomes
 - **Predicted Score** with expected goals (xG) analysis
 - **Betting Odds** calculator (decimal format)
-- **Interactive Visualizations** with confidence bars and charts
+- **Tactical Edge Analysis** with momentum, attack, defense, shots, and discipline gaps
+- **Interactive Visualizations** with confidence bars, edge charts, and radar-style team fingerprints
 
 ### 📊 Advanced Analytics
 - **Team Statistics Dashboard** with comprehensive metrics:
@@ -76,7 +77,7 @@ The model uses these features for predictions:
 
 - **Algorithm:** XGBoost Multi-class Classifier
 - **Classes:** Home Win, Draw, Away Win
-- **Features:** 5 engineered features
+- **Features:** Historical pre-match form, shot volume, shot accuracy, corners, cards, clean sheets, BTTS, and momentum-gap signals
 - **Evaluation:** mlogloss metric
 - **Output:** Probability distribution across all outcomes
 
@@ -206,6 +207,8 @@ Run `python main.py` to see detailed performance metrics during training.
 - [ ] Historical prediction tracking
 - [ ] API endpoints for external integrations
 - [ ] Mobile-responsive design improvements
+- [ ] Post-match prediction tracking and calibration charts
+- [ ] Venue-aware home/away strength modeling
 
 ## 🤝 Contributing
 
