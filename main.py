@@ -2,9 +2,8 @@
 
 import pandas as pd
 import joblib
-from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from utils.features import create_features
+from utils.features import create_features, get_feature_columns
 from model.predictor import train_model
 from utils.analytics import evaluate_model_performance, get_feature_importance
 
@@ -17,25 +16,14 @@ df["Date"] = pd.to_datetime(df["Date"], dayfirst=True)
 # Drop rows with missing results
 df = df.dropna(subset=["FTHG", "FTAG", "FTR"])
 
-# Encode teams
-le = LabelEncoder()
-df["HomeTeam_enc"] = le.fit_transform(df["HomeTeam"])
-df["AwayTeam_enc"] = le.transform(df["AwayTeam"])
-
 # Encode match result
 df["FTR_encoded"] = df["FTR"].map({"H": 0, "D": 1, "A": 2})
 
 # Feature engineering
-df, _ = create_features(df)  # Fix here: discard second item from tuple
+df, le = create_features(df)
 
 # Prepare features for model evaluation
-features = [
-    "HomeTeam_enc",
-    "AwayTeam_enc",
-    "goal_diff",
-    "home_team_form",
-    "away_team_form",
-]
+features = get_feature_columns()
 X = df[features]
 y = df["FTR_encoded"]
 
