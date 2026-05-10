@@ -13,6 +13,7 @@ from utils.analytics import (
     get_league_table,
     generate_match_insights,
     get_team_recent_trend,
+    get_match_edge_summary,
 )
 
 # Page configuration
@@ -21,15 +22,70 @@ st.set_page_config(page_title="Football Predictor Pro", page_icon="⚽", layout=
 # Load data and apply feature engineering
 df = pd.read_csv("data/matches.csv")
 df["Date"] = pd.to_datetime(df["Date"], dayfirst=True)
-df, _ = create_features(df)  # apply home/away form
+df, le = create_features(df)
 
 # Load trained model and encoder
 model = joblib.load("model/match_predictor.pkl")
-le = joblib.load("model/label_encoder.pkl")
+
+team_options = sorted(le.classes_)
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.25rem;
+        padding-bottom: 2rem;
+    }
+    .hero-banner {
+        background: linear-gradient(135deg, rgba(12, 18, 40, 0.98), rgba(25, 69, 122, 0.92));
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 1.25rem;
+        padding: 1.2rem 1.4rem;
+        color: white;
+        box-shadow: 0 14px 40px rgba(5, 10, 25, 0.22);
+        margin-bottom: 1rem;
+    }
+    .hero-title {
+        font-size: 2rem;
+        font-weight: 800;
+        margin-bottom: 0.25rem;
+    }
+    .hero-subtitle {
+        opacity: 0.88;
+        margin-bottom: 0.9rem;
+    }
+    .hero-chip {
+        display: inline-block;
+        margin-right: 0.45rem;
+        margin-bottom: 0.45rem;
+        padding: 0.35rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        font-size: 0.85rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <div class="hero-banner">
+        <div class="hero-title">Football Predictor Pro</div>
+        <div class="hero-subtitle">Advanced match intelligence built on historical form, tactical edges, and multi-factor probability modeling.</div>
+        <span class="hero-chip">Pre-match form</span>
+        <span class="hero-chip">Chance creation</span>
+        <span class="hero-chip">Defensive stability</span>
+        <span class="hero-chip">Prediction confidence</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Streamlit UI
 st.title("⚽ Football Predictor Pro - AI-Powered Match Predictions")
-st.markdown("---")
+st.caption("Explore tactical edges, market-style odds, live fixtures, and team fingerprints in one place.")
 
 # Create tabs for better organization
 tab1, tab2, tab3, tab4 = st.tabs(
@@ -40,10 +96,10 @@ with tab1:
     col1, col2 = st.columns(2)
 
     with col1:
-        home = st.selectbox("🏠 Home Team", sorted(df.HomeTeam.unique()), key="home")
+        home = st.selectbox("🏠 Home Team", team_options, key="home")
 
     with col2:
-        away = st.selectbox("✈️ Away Team", sorted(df.HomeTeam.unique()), key="away")
+        away = st.selectbox("✈️ Away Team", team_options, key="away")
 
     if st.button("🔮 Predict Match", type="primary", use_container_width=True):
         if home == away:
@@ -109,6 +165,45 @@ with tab1:
                     f"🎯 **Predicted Outcome:** {prediction} (Confidence: {max(probabilities) * 100:.1f}%)"
                 )
 
+                edge_summary = get_match_edge_summary(home, away, df)
+                home_snapshot = edge_summary["home_snapshot"]
+                away_snapshot = edge_summary["away_snapshot"]
+
+                st.markdown("### 🧠 Tactical Edge")
+                edge_cols = st.columns(5)
+                with edge_cols[0]:
+                    st.metric("Momentum", f"{edge_summary['momentum_gap']:+.2f}")
+                with edge_cols[1]:
+                    st.metric("Attack", f"{edge_summary['attack_gap']:+.2f}")
+                with edge_cols[2]:
+                    st.metric("Defense", f"{edge_summary['defense_gap']:+.2f}")
+                with edge_cols[3]:
+                    st.metric("Shots on Target", f"{edge_summary['shot_gap']:+.2f}")
+                with edge_cols[4]:
+                    st.metric("Discipline", f"{edge_summary['discipline_gap']:+.2f}")
+
+                edge_chart = px.bar(
+                    pd.DataFrame(
+                        {
+                            "Edge": ["Momentum", "Attack", "Defense", "Shots", "Discipline"],
+                            "Value": [
+                                edge_summary["momentum_gap"],
+                                edge_summary["attack_gap"],
+                                edge_summary["defense_gap"],
+                                edge_summary["shot_gap"],
+                                edge_summary["discipline_gap"],
+                            ],
+                        }
+                    ),
+                    x="Edge",
+                    y="Value",
+                    color="Value",
+                    color_continuous_scale=["#d73027", "#fdae61", "#1a9850"],
+                    title="Pre-match Edge Profile",
+                )
+                edge_chart.update_layout(height=320, showlegend=False)
+                st.plotly_chart(edge_chart, use_container_width=True)
+
                 # Head-to-Head Stats
                 h2h = get_head_to_head(home, away, df)
                 if h2h:
@@ -143,6 +238,10 @@ with tab1:
                         st.write(f"🏆 Win Rate: {home_stats['win_rate']:.1f}%")
                         st.write(f"⚽ Goals Scored: {home_stats['goals_scored']}")
                         st.write(f"🥅 Goals Conceded: {home_stats['goals_conceded']}")
+                        st.write(f"🎯 Shot Accuracy: {home_stats['shot_accuracy'] * 100:.1f}%")
+                        st.write(f"🧱 Clean Sheets: {home_stats['clean_sheet_rate']:.1f}%")
+                        st.write(f"🔁 BTTS Rate: {home_stats['btts_rate']:.1f}%")
+                        st.write(f"📈 Over 2.5 Rate: {home_stats['over25_rate']:.1f}%")
                         st.write(
                             f"📊 Goal Difference: {home_stats['goal_difference']:+d}"
                         )
@@ -153,6 +252,10 @@ with tab1:
                         st.write(f"🏆 Win Rate: {away_stats['win_rate']:.1f}%")
                         st.write(f"⚽ Goals Scored: {away_stats['goals_scored']}")
                         st.write(f"🥅 Goals Conceded: {away_stats['goals_conceded']}")
+                        st.write(f"🎯 Shot Accuracy: {away_stats['shot_accuracy'] * 100:.1f}%")
+                        st.write(f"🧱 Clean Sheets: {away_stats['clean_sheet_rate']:.1f}%")
+                        st.write(f"🔁 BTTS Rate: {away_stats['btts_rate']:.1f}%")
+                        st.write(f"📈 Over 2.5 Rate: {away_stats['over25_rate']:.1f}%")
                         st.write(
                             f"📊 Goal Difference: {away_stats['goal_difference']:+d}"
                         )
@@ -160,7 +263,13 @@ with tab1:
 
                 # Match intelligence
                 insights = generate_match_insights(
-                    home, away, probabilities, home_stats, away_stats
+                    home,
+                    away,
+                    probabilities,
+                    home_stats,
+                    away_stats,
+                    home_snapshot,
+                    away_snapshot,
                 )
                 st.markdown("### 🧠 Match Intelligence")
                 intel_col1, intel_col2, intel_col3 = st.columns(3)
@@ -227,7 +336,7 @@ with tab2:
     st.subheader("📊 Detailed Team Analytics")
 
     selected_team = st.selectbox(
-        "Select a team to analyze", sorted(df.HomeTeam.unique()), key="analytics"
+        "Select a team to analyze", team_options, key="analytics"
     )
 
     team_stats = get_team_stats(selected_team, df)
