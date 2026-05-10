@@ -1,6 +1,8 @@
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
+from utils.features import summarize_team_history
+
 
 def get_confidence_tier(confidence):
     """Classify prediction confidence into simple tiers."""
@@ -12,7 +14,13 @@ def get_confidence_tier(confidence):
 
 
 def generate_match_insights(
-    home_team, away_team, probabilities, home_stats=None, away_stats=None
+    home_team,
+    away_team,
+    probabilities,
+    home_stats=None,
+    away_stats=None,
+    home_snapshot=None,
+    away_snapshot=None,
 ):
     """Generate lightweight match intelligence from probabilities and team stats."""
     labels = ["Home Win", "Draw", "Away Win"]
@@ -22,6 +30,7 @@ def generate_match_insights(
 
     upset_alert = False
     reason = "No major upset signal detected."
+    edge_notes = []
 
     home_win_rate = (home_stats or {}).get("win_rate")
     away_win_rate = (away_stats or {}).get("win_rate")
@@ -49,12 +58,57 @@ def generate_match_insights(
             "would be an upset."
         )
 
+    if home_snapshot and away_snapshot:
+        momentum_gap = home_snapshot.get("points_per_match", 0) - away_snapshot.get(
+            "points_per_match", 0
+        )
+        attack_gap = home_snapshot.get("goals_for_form", 0) - away_snapshot.get(
+            "goals_against_form", 0
+        )
+        defense_gap = away_snapshot.get("goals_for_form", 0) - home_snapshot.get(
+            "goals_against_form", 0
+        )
+
+        if abs(momentum_gap) >= 0.4:
+            stronger = home_team if momentum_gap > 0 else away_team
+            edge_notes.append(f"Momentum edge leans toward {stronger}")
+
+        if attack_gap >= 0.4:
+            edge_notes.append(f"{home_team} is creating better chances recently")
+
+        if defense_gap >= 0.4:
+            edge_notes.append(f"{away_team} has been more stable defensively")
+
+        if edge_notes and reason == "No major upset signal detected.":
+            reason = "; ".join(edge_notes)
+
     return {
         "predicted_outcome": predicted_outcome,
         "confidence": confidence,
         "confidence_tier": get_confidence_tier(confidence),
         "upset_alert": upset_alert,
         "upset_reason": reason,
+    }
+
+
+def get_match_edge_summary(home_team, away_team, df, window=5):
+    """Build a compact pre-match edge summary for the UI."""
+    home_snapshot = summarize_team_history(home_team, df, venue="home", window=window)
+    away_snapshot = summarize_team_history(away_team, df, venue="away", window=window)
+
+    return {
+        "home_snapshot": home_snapshot,
+        "away_snapshot": away_snapshot,
+        "momentum_gap": home_snapshot.get("points_per_match", 0)
+        - away_snapshot.get("points_per_match", 0),
+        "attack_gap": home_snapshot.get("goals_for_form", 0)
+        - away_snapshot.get("goals_against_form", 0),
+        "defense_gap": away_snapshot.get("goals_for_form", 0)
+        - home_snapshot.get("goals_against_form", 0),
+        "shot_gap": home_snapshot.get("shots_on_target_form", 0)
+        - away_snapshot.get("shots_on_target_form", 0),
+        "discipline_gap": away_snapshot.get("cards_form", 0)
+        - home_snapshot.get("cards_form", 0),
     }
 
 
@@ -262,4 +316,111 @@ def predict_score(home_team, away_team, df):
         "most_likely": f"{home_score}-{away_score}",
         "alternative": f"{alt_home}-{alt_away}",
         "xg": xg_data,
+    }
+
+
+def _venue_matches(team, df, venue):
+    if venue == "home":
+        return df[df["HomeTeam"] == team].copy()
+    if venue == "away":
+        return df[df["AwayTeam"] == team].copy()
+    return df[(df["HomeTeam"] == team) | (df["AwayTeam"] == team)].copy()
+
+
+def get_team_stats(team, df):
+    """Get comprehensive statistics for a team"""
+    home_games = df[df["HomeTeam"] == team]
+    away_games = df[df["AwayTeam"] == team]
+
+    total_games = len(home_games) + len(away_games)
+
+    if total_games == 0:
+        return None
+
+    # Calculate wins, draws, losses
+    home_wins = len(home_games[home_games["FTR"] == "H"])
+    away_wins = len(away_games[away_games["FTR"] == "A"])
+    home_draws = len(home_games[home_games["FTR"] == "D"])
+    away_draws = len(away_games[away_games["FTR"] == "D"])
+
+    total_wins = home_wins + away_wins
+    total_draws = home_draws + away_draws
+    total_losses = total_games - total_wins - total_draws
+
+    # Goals statistics
+    goals_scored = home_games["FTHG"].sum() + away_games["FTAG"].sum()
+    goals_conceded = home_games["FTAG"].sum() + away_games["FTHG"].sum()
+
+    # Shots, corners, and discipline
+    shots_for = home_games.get("HS", pd.Series(dtype=float)).sum() + away_games.get(
+        "AS", pd.Series(dtype=float)
+    ).sum()
+    shots_against = home_games.get("AS", pd.Series(dtype=float)).sum() + away_games.get(
+        "HS", pd.Series(dtype=float)
+    ).sum()
+    shots_on_target_for = home_games.get("HST", pd.Series(dtype=float)).sum() + away_games.get(
+        "AST", pd.Series(dtype=float)
+    ).sum()
+    corners_for = home_games.get("HC", pd.Series(dtype=float)).sum() + away_games.get(
+        "AC", pd.Series(dtype=float)
+    ).sum()
+    cards_for = home_games.get("HY", pd.Series(dtype=float)).sum() + away_games.get(
+        "AY", pd.Series(dtype=float)
+    ).sum() + (home_games.get("HR", pd.Series(dtype=float)).sum() + away_games.get("AR", pd.Series(dtype=float)).sum()) * 2
+
+    # Recent form (last 5 games)
+    all_games = _venue_matches(team, df, None).sort_values("Date")
+    recent_games = all_games.tail(5)
+
+    recent_form = []
+    for _, game in recent_games.iterrows():
+        is_home = game["HomeTeam"] == team
+        if is_home:
+            if game["FTR"] == "H":
+                recent_form.append("W")
+            elif game["FTR"] == "D":
+                recent_form.append("D")
+            else:
+                recent_form.append("L")
+        else:
+            if game["FTR"] == "A":
+                recent_form.append("W")
+            elif game["FTR"] == "D":
+                recent_form.append("D")
+            else:
+                recent_form.append("L")
+
+    recent_snapshot = summarize_team_history(team, df, venue=None, window=5)
+    home_snapshot = summarize_team_history(team, df, venue="home", window=5)
+    away_snapshot = summarize_team_history(team, df, venue="away", window=5)
+
+    total_matches = len(all_games)
+    clean_sheets = len(all_games[((all_games["HomeTeam"] == team) & (all_games["FTAG"] == 0)) | ((all_games["AwayTeam"] == team) & (all_games["FTHG"] == 0))])
+    btts = len(all_games[(all_games["FTHG"] > 0) & (all_games["FTAG"] > 0)])
+    over25 = len(all_games[(all_games["FTHG"] + all_games["FTAG"]) >= 3])
+
+    return {
+        "total_games": total_games,
+        "wins": total_wins,
+        "draws": total_draws,
+        "losses": total_losses,
+        "win_rate": (total_wins / total_games) * 100,
+        "goals_scored": int(goals_scored),
+        "goals_conceded": int(goals_conceded),
+        "goal_difference": int(goals_scored - goals_conceded),
+        "avg_goals_scored": goals_scored / total_games,
+        "avg_goals_conceded": goals_conceded / total_games,
+        "recent_form": "".join(recent_form),
+        "shots_for": float(shots_for),
+        "shots_against": float(shots_against),
+        "shots_on_target_for": float(shots_on_target_for),
+        "shot_accuracy": float(shots_on_target_for / shots_for) if shots_for else 0.0,
+        "corners_for": float(corners_for),
+        "cards_for": float(cards_for),
+        "clean_sheet_rate": (clean_sheets / total_matches) * 100 if total_matches else 0.0,
+        "btts_rate": (btts / total_matches) * 100 if total_matches else 0.0,
+        "over25_rate": (over25 / total_matches) * 100 if total_matches else 0.0,
+        "recent_snapshot": recent_snapshot,
+        "home_snapshot": home_snapshot,
+        "away_snapshot": away_snapshot,
     }
