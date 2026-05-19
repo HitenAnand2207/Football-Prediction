@@ -1,16 +1,18 @@
+import os
 import streamlit as st
 import pandas as pd
 import joblib
 import plotly.graph_objects as go
 import plotly.express as px
 
-from model.predictor import predict_match, get_team_stats, get_head_to_head
+from model.predictor import predict_match, get_head_to_head
 from scraper.live_scrapper import get_today_matches
 from utils.features import create_features
 from utils.analytics import (
     calculate_betting_odds,
     predict_score,
     get_league_table,
+    get_team_stats,
     generate_match_insights,
     get_team_recent_trend,
     get_match_edge_summary,
@@ -88,8 +90,8 @@ st.title("⚽ Football Predictor Pro - AI-Powered Match Predictions")
 st.caption("Explore tactical edges, market-style odds, live fixtures, and team fingerprints in one place.")
 
 # Create tabs for better organization
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["🎯 Match Predictor", "📊 Team Analytics", "📺 Live Fixtures", "🏆 League Table"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["🎯 Match Predictor", "📊 Team Analytics", "📺 Live Fixtures", "🏆 League Table", "🧪 Model Diagnostics"]
 )
 
 with tab1:
@@ -557,6 +559,52 @@ with tab4:
 
     except Exception as e:
         st.error(f"Unable to generate league table: {e}")
+
+with tab5:
+    st.subheader("🧪 Model Diagnostics & Interactive Plots")
+    st.caption("View feature importance, confusion matrix, calibration, and the classification report.")
+
+    try:
+        import streamlit.components.v1 as components
+
+        fi_html = "reports/plots/feature_importance.html"
+        cm_html = "reports/plots/confusion_matrix.html"
+        cal_html = "reports/plots/calibration_curve.html"
+        cr_json = "reports/classification_report.json"
+
+        if os.path.exists(fi_html):
+            st.markdown("**Feature Importance**")
+            with open(fi_html, "r", encoding="utf-8") as fh:
+                components.html(fh.read(), height=600)
+        else:
+            st.info("Feature importance plot not found. Run `python visualize.py` to generate.")
+
+        if os.path.exists(cm_html):
+            st.markdown("**Confusion Matrix**")
+            with open(cm_html, "r", encoding="utf-8") as fh:
+                components.html(fh.read(), height=500)
+        else:
+            st.info("Confusion matrix plot not found. Run `python visualize.py` to generate.")
+
+        if os.path.exists(cal_html):
+            st.markdown("**Calibration Curve**")
+            with open(cal_html, "r", encoding="utf-8") as fh:
+                components.html(fh.read(), height=600)
+        else:
+            st.info("Calibration plot not found. Run `python visualize.py` to generate.")
+
+        if os.path.exists(cr_json):
+            st.markdown("**Classification Report**")
+            import json
+
+            with open(cr_json, "r", encoding="utf-8") as fh:
+                cr = json.load(fh)
+            st.json(cr)
+        else:
+            st.info("Classification report not found. Run `python visualize.py` to generate.")
+
+    except Exception as e:
+        st.error(f"Unable to load diagnostics: {e}")
 
 # Footer
 st.markdown("---")
