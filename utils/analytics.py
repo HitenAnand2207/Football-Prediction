@@ -1,5 +1,10 @@
+import os
+import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.calibration import calibration_curve
 
 from utils.features import summarize_team_history
 
@@ -283,6 +288,68 @@ def get_league_table(df, teams=None):
     standings_df.insert(0, "position", range(1, len(standings_df) + 1))
 
     return standings_df
+
+
+def plot_feature_importance_plotly(model, feature_names, save_path=None):
+    """Return a Plotly bar chart of feature importance and optionally save as HTML."""
+    try:
+        fi_df = get_feature_importance(model, feature_names)
+    except Exception:
+        # Fallback if model doesn't expose feature_importances_
+        importance = getattr(model, "feature_importances_", None)
+        if importance is None:
+            raise
+        fi_df = pd.DataFrame({"feature": feature_names, "importance": importance}).sort_values("importance", ascending=False)
+
+    fig = px.bar(fi_df, x="importance", y="feature", orientation="h", title="Feature Importance")
+    fig.update_layout(yaxis={"categoryorder": "total ascending"}, height=600)
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.write_html(save_path)
+    return fig
+
+
+def plot_confusion_matrix_plotly(cm, labels=None, save_path=None):
+    """Return a Plotly heatmap for the confusion matrix and optionally save as HTML."""
+    if labels is None:
+        labels = ["Home Win", "Draw", "Away Win"]
+
+    z = np.array(cm)
+    fig = go.Figure(data=go.Heatmap(z=z, x=labels, y=labels, colorscale="Viridis", showscale=True))
+    fig.update_layout(title="Confusion Matrix", xaxis_title="Predicted", yaxis_title="Actual", height=500)
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.write_html(save_path)
+    return fig
+
+
+def plot_calibration_curve_plotly(model, X, y, n_bins=10, save_path=None):
+    """Plot calibration curve per class for a multi-class classifier."""
+    labels = ["Home Win", "Draw", "Away Win"]
+    probs = model.predict_proba(X)
+
+    fig = go.Figure()
+    for i, label in enumerate(labels):
+        prob_i = probs[:, i]
+        try:
+            frac_pos, mean_pred = calibration_curve((y == i).astype(int), prob_i, n_bins=n_bins, strategy="uniform")
+        except Exception:
+            # fallback to simple binning
+            bins = np.linspace(0.0, 1.0, n_bins + 1)
+            inds = np.digitize(prob_i, bins) - 1
+            mean_pred = [prob_i[inds == j].mean() if (inds == j).any() else 0 for j in range(n_bins)]
+            frac_pos = [(y[inds == j] == i).mean() if (inds == j).any() else 0 for j in range(n_bins)]
+
+        fig.add_trace(go.Scatter(x=mean_pred, y=frac_pos, mode="lines+markers", name=label))
+
+    fig.add_trace(go.Line(x=[0, 1], y=[0, 1], line=dict(dash="dash"), name="Perfect"))
+    fig.update_layout(title="Calibration Curve (per class)", xaxis_title="Mean Predicted Probability", yaxis_title="Fraction of Positives", height=600)
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.write_html(save_path)
+
+    return fig
 
 
 def predict_score(home_team, away_team, df):
