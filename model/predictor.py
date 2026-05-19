@@ -1,5 +1,6 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.calibration import CalibratedClassifierCV
 from xgboost import XGBClassifier
 
 from utils.features import build_match_features, get_feature_columns
@@ -11,10 +12,11 @@ def train_model(df):
     y = df["FTR_encoded"]  # 0 = Home Win, 1 = Draw, 2 = Away Win
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    model = XGBClassifier(
+    # Base XGBoost model
+    base_model = XGBClassifier(
         objective="multi:softprob",
         num_class=3,
         n_estimators=350,
@@ -25,20 +27,32 @@ def train_model(df):
         reg_lambda=1.2,
         min_child_weight=2,
         eval_metric="mlogloss",
+        use_label_encoder=False,
         random_state=42,
     )
-    model.fit(X_train, y_train)
 
-    accuracy = model.score(X_test, y_test)
+    # Quick cross-validation to estimate performance
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    try:
+        cv_scores = cross_val_score(base_model, X_train, y_train, cv=cv, scoring="accuracy")
+        print(f"CV Accuracy: {cv_scores.mean():.2%} (+/- {cv_scores.std():.2%})")
+    except Exception:
+        cv_scores = None
+
+    # Fit and calibrate probabilities for better confidence estimates
+    calibrator = CalibratedClassifierCV(base_model, cv=5, method="sigmoid")
+    calibrator.fit(X_train, y_train)
+
+    accuracy = calibrator.score(X_test, y_test)
     print(f"Model Accuracy: {accuracy:.2%}")
 
-    return model
+    return calibrator
 
 
 def predict_match(home, away, df, model, le):
     features = build_match_features(home, away, df, le)
 
-    result = model.predict(features)[0]
+    result = int(model.predict(features)[0])
     probabilities = model.predict_proba(features)[0]
 
     outcome_map = {0: "Home Win", 1: "Draw", 2: "Away Win"}
