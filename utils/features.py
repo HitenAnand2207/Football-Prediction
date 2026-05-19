@@ -38,6 +38,13 @@ FEATURE_COLUMNS = [
     "defense_gap",
     "shot_gap",
     "discipline_gap",
+    # New features
+    "home_rest_days",
+    "away_rest_days",
+    "h2h_total_matches",
+    "h2h_home_wins",
+    "h2h_away_wins",
+    "h2h_draws",
 ]
 
 
@@ -172,6 +179,13 @@ def _build_feature_row(home_snapshot, away_snapshot, home_team_enc, away_team_en
         "defense_gap": away_snapshot["goals_for_form"] - home_snapshot["goals_against_form"],
         "shot_gap": home_snapshot["shots_on_target_form"] - away_snapshot["shots_on_target_form"],
         "discipline_gap": away_snapshot["cards_form"] - home_snapshot["cards_form"],
+        # placeholders for rest days and h2h that will be filled by callers when available
+        "home_rest_days": float(home_snapshot.get("rest_days", 7.0)),
+        "away_rest_days": float(away_snapshot.get("rest_days", 7.0)),
+        "h2h_total_matches": float(home_snapshot.get("h2h_total_matches", 0.0)),
+        "h2h_home_wins": float(home_snapshot.get("h2h_home_wins", 0.0)),
+        "h2h_away_wins": float(home_snapshot.get("h2h_away_wins", 0.0)),
+        "h2h_draws": float(home_snapshot.get("h2h_draws", 0.0)),
     }
 
 
@@ -198,7 +212,6 @@ def summarize_team_history(team, df, venue=None, window=WINDOW_SIZE):
 def build_match_features(home_team, away_team, df, le, window=WINDOW_SIZE):
     if home_team not in le.classes_ or away_team not in le.classes_:
         raise ValueError("One or both teams are not present in the label encoder.")
-
     home_snapshot = _fallback_snapshot(
         summarize_team_history(home_team, df, venue="home", window=window),
         summarize_team_history(home_team, df, venue=None, window=window),
@@ -207,6 +220,40 @@ def build_match_features(home_team, away_team, df, le, window=WINDOW_SIZE):
         summarize_team_history(away_team, df, venue="away", window=window),
         summarize_team_history(away_team, df, venue=None, window=window),
     )
+
+    # Compute rest days (days since last match in dataset)
+    try:
+        last_date_home = df[((df["HomeTeam"] == home_team) | (df["AwayTeam"] == home_team))]["Date"].max()
+        last_date_away = df[((df["HomeTeam"] == away_team) | (df["AwayTeam"] == away_team))]["Date"].max()
+        reference = df["Date"].max()
+        home_snapshot["rest_days"] = float((reference - last_date_home).days) if pd.notna(last_date_home) else float(window)
+        away_snapshot["rest_days"] = float((reference - last_date_away).days) if pd.notna(last_date_away) else float(window)
+    except Exception:
+        home_snapshot["rest_days"] = float(window)
+        away_snapshot["rest_days"] = float(window)
+
+    # Compute simple head-to-head summary using recent matches
+    key_mask = ((df["HomeTeam"] == home_team) & (df["AwayTeam"] == away_team)) | ((df["HomeTeam"] == away_team) & (df["AwayTeam"] == home_team))
+    h2h = df[key_mask].sort_values("Date")
+    recent = h2h.tail(window)
+    total = len(recent)
+    home_wins = 0
+    away_wins = 0
+    draws = 0
+    for _, m in recent.iterrows():
+        if m["FTR"] == "D":
+            draws += 1
+        else:
+            # determine which side won
+            if (m["HomeTeam"] == home_team and m["FTR"] == "H") or (m["AwayTeam"] == home_team and m["FTR"] == "A"):
+                home_wins += 1
+            else:
+                away_wins += 1
+
+    home_snapshot["h2h_total_matches"] = float(total)
+    home_snapshot["h2h_home_wins"] = float(home_wins)
+    home_snapshot["h2h_away_wins"] = float(away_wins)
+    home_snapshot["h2h_draws"] = float(draws)
 
     feature_row = _build_feature_row(
         home_snapshot,
@@ -231,11 +278,22 @@ def create_features(df, label_encoder=None, window=WINDOW_SIZE):
     away_histories = defaultdict(list)
     overall_histories = defaultdict(list)
 
+    pairwise_histories = defaultdict(list)
+    last_date = {}
+
     feature_rows = []
 
     for _, row in df.iterrows():
         home_team = row["HomeTeam"]
         away_team = row["AwayTeam"]
+
+        # compute rest days based on last_date
+        home_rest = None
+        away_rest = None
+        if home_team in last_date:
+            home_rest = (row["Date"] - last_date[home_team]).days
+        if away_team in last_date:
+            away_rest = (row["Date"] - last_date[away_team]).days
 
         home_overall_snapshot = _history_snapshot(overall_histories[home_team], window=window)
         away_overall_snapshot = _history_snapshot(overall_histories[away_team], window=window)
@@ -247,6 +305,33 @@ def create_features(df, label_encoder=None, window=WINDOW_SIZE):
             _history_snapshot(away_histories[away_team], window=window),
             away_overall_snapshot,
         )
+
+        # attach rest-days to snapshots
+        home_home_snapshot["rest_days"] = float(home_rest) if home_rest is not None else float(window)
+        away_away_snapshot["rest_days"] = float(away_rest) if away_rest is not None else float(window)
+
+        # compute head-to-head recent summary from pairwise_histories
+        key = tuple(sorted([home_team, away_team]))
+        recent_h2h = pairwise_histories[key][-window:]
+        h2h_total = len(recent_h2h)
+        h2h_home_wins = 0
+        h2h_away_wins = 0
+        h2h_draws = 0
+        for m in recent_h2h:
+            if m["FTR"] == "D":
+                h2h_draws += 1
+            else:
+                if m["HomeTeam"] == home_team and m["FTR"] == "H":
+                    h2h_home_wins += 1
+                elif m["AwayTeam"] == home_team and m["FTR"] == "A":
+                    h2h_home_wins += 1
+                else:
+                    h2h_away_wins += 1
+
+        home_home_snapshot["h2h_total_matches"] = float(h2h_total)
+        home_home_snapshot["h2h_home_wins"] = float(h2h_home_wins)
+        home_home_snapshot["h2h_away_wins"] = float(h2h_away_wins)
+        home_home_snapshot["h2h_draws"] = float(h2h_draws)
 
         feature_rows.append(
             _build_feature_row(
@@ -260,10 +345,22 @@ def create_features(df, label_encoder=None, window=WINDOW_SIZE):
         home_record = _record_from_row(row, home_team, True)
         away_record = _record_from_row(row, away_team, False)
 
+        # append to pairwise history before updating last_date
+        pairwise_histories[tuple(sorted([home_team, away_team]))].append({
+            "HomeTeam": home_team,
+            "AwayTeam": away_team,
+            "FTR": row.get("FTR"),
+            "Date": row.get("Date"),
+        })
+
         overall_histories[home_team].append(home_record)
         overall_histories[away_team].append(away_record)
         home_histories[home_team].append(home_record)
         away_histories[away_team].append(away_record)
+
+        # update last played dates
+        last_date[home_team] = row["Date"]
+        last_date[away_team] = row["Date"]
 
     features_df = pd.DataFrame(feature_rows, index=df.index)
     df = pd.concat([df, features_df], axis=1)
